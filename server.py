@@ -25,11 +25,10 @@ class ProtocolHandler(object):
         }
 
     def handle_request(self, socket_file):
-        first_byte = socket_file.read(1)
+        first_byte = socket_file.read(1).decode("utf-8")
         
         if not first_byte:
             raise Disconnect()
-        
         try:
             return self.handlers[first_byte](socket_file)
         except KeyError:
@@ -65,12 +64,13 @@ class ProtocolHandler(object):
         buffer = BytesIO()
         self._write(buffer, data)
         buffer.seek(0)
-        socket_file._write(buffer.getvalue())
+        socket_file.write(buffer.getvalue())
         socket_file.flush()
 
     # Find instance of class and write with the appropriate first byte
     def _write(self, buffer, data):
         if isinstance(data, str):
+
             data = data.encode('utf-8')
 
         if isinstance(data, bytes):
