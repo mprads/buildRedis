@@ -13,7 +13,7 @@ Error = namedtuple('Error', ('message'))
 
 # The Redis protocol uses a request/response communication pattern with the clients.
 # Responses from the server will use the first byte to indicate data-type, followed by the data, terminated by a carriage-return/line-feed.
-class ProtocalHandler(object):
+class ProtocolHandler(object):
     def __init__(self):
         self.handlers = {
             '+': self.handle_simple_string,
@@ -74,22 +74,22 @@ class ProtocalHandler(object):
             data = data.encode('utf-8')
 
         if isinstance(data, bytes):
-            buffer.write('$%s\r\n%s\r\n' % (len(data), data))
+            buffer.write(('$%s\r\n%s\r\n' % (len(data), data)).encode())
         elif isinstance(data, int):
-            buffer.write(':%s\r\n' % data)
+            buffer.write((':%s\r\n' % data).encode())
         elif isinstance(data, Error):
-            buffer.write('-%s\r\n' % error.message)
+            buffer.write(('-%s\r\n' % Error.message).encode())
         elif isinstance(data, (list, tuple)):
-            buffer.write('*%s\r\n' % len(data))
+            buffer.write(('*%s\r\n' % len(data)).encode())
             for item in data:
                 self._write(buffer, item)
         elif isinstance(data, dict):
-            buffer.write('%%%s\r\n' % len(data))
+            buffer.write(('%%%s\r\n' % len(data)).encode())
             for key in data:
                 self._write(buffer, key)
                 self._write(buffer, data[key])
         elif data is None:
-            buffer.write('$-1\r\n')
+            buffer.write('$-1\r\n'.encode())
         else:
             raise CommandError('unrecognized type: %s' % type(data))
 
@@ -100,9 +100,9 @@ class Server(object):
         self._server = StreamServer(
             (host, port),
             self.connection_handler,
-            spawn=self.pool)
+            spawn=self._pool)
 
-        self_protocol = ProtocalHandler()
+        self._protocol = ProtocolHandler()
         self._kv = {}
         self._commands = self.get_commands()
 
@@ -118,7 +118,7 @@ class Server(object):
 
     def connection_handler(self, conn, address):
         # Change a socket object into a file-like object
-        socket_file = conn.makerfile('rwb')
+        socket_file = conn.makefile('rwb')
 
         # Process requests until client disconnects
         while True:
@@ -163,7 +163,6 @@ class Server(object):
             return 1
         return 0
     
-    # I don't get why you store the length before clearing then return that value
     def flush(self):
         kvlen = len(self._kv)
         self._kv.clear()
@@ -180,3 +179,41 @@ class Server(object):
     
     def run(self):
         self._server.serve_forever()
+
+    
+class Client(object):
+    def __init__(self, host='127.0.0.1', port=31337):
+        self._protocol = ProtocolHandler()
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.connect((host, port))
+        self._fh = self._socket.makefile('rwb')
+
+    def execute(self, *args):
+        self._protocol.write_response(self._fh, args)
+        res = self._protocol.handle_request(self._fh)
+
+        if isinstance(res, Error):
+            raise CommandError(res.message)
+        return res
+    
+    def get(self, key):
+        return self.execute('GET', key)
+
+    def set(self, key, value):
+        return self.execute('SET', key, value)
+
+    def delete(self, key):
+        return self.execute('DELETE', key)
+
+    def flush(self):
+        return self.execute('FLUSH')
+
+    def mget(self, *keys):
+        return self.execute('MGET', *keys)
+
+    def mset(self, *items):
+        return self.execute('MSET', *items)
+        
+if __name__ == '__main__':
+    from gevent import monkey; monkey.patch_all()
+    Server().run()
