@@ -16,17 +16,16 @@ Error = namedtuple('Error', ('message'))
 class ProtocolHandler(object):
     def __init__(self):
         self.handlers = {
-            '+': self.handle_simple_string,
-            '-': self.handle_error,
-            ':': self.handle_integer,
-            '$': self.handle_string,
-            '*': self.handle_array,
-            '%': self.handle_dict
+            b'+': self.handle_simple_string,
+            b'-': self.handle_error,
+            b':': self.handle_integer,
+            b'$': self.handle_string,
+            b'*': self.handle_array,
+            b'%': self.handle_dict
         }
 
     def handle_request(self, socket_file):
-        first_byte = socket_file.read(1).decode("utf-8")
-        
+        first_byte = socket_file.read(1)
         if not first_byte:
             raise Disconnect()
         try:
@@ -35,29 +34,28 @@ class ProtocolHandler(object):
             raise CommandError('Bad Request')
         
     def handle_simple_string(self, socket_file):
-        return socket_file.readline().rstrip('\r\n')
+        return socket_file.readline().rstrip('\r\n'.encode('utf-8'))
 
     def handle_error(self, socket_file):
-        return Error(socket_file.readline().rstrip('\r\n'))
+        return Error(socket_file.readline().rstrip('\r\n'.encode('utf-8')))
 
     def handle_integer(self, socket_file):
-        return int(socket_file.readline().rstrip('\r\n'))
+        return int(socket_file.readline().rstrip('\r\n'.encode('utf-8')))
 
     def handle_string(self, socket_file):
-        length = int(socket_file.readline().rstrip('\r\n'))
+        length = int(socket_file.readline().rstrip('\r\n'.encode('utf-8')))
         if length == -1:
             return None  # Special-case for NULLs.
         length += 2  # Include the trailing \r\n in count.
         return socket_file.read(length)[:-2]
 
     def handle_array(self, socket_file):
-        num_elements = int(socket_file.readline().rstrip('\r\n'))
+        num_elements = int(socket_file.readline().rstrip('\r\n'.encode('utf-8')))
         return [self.handle_request(socket_file) for _ in range(num_elements)]
 
     def handle_dict(self, socket_file):
-        num_items = int(socket_file.readline().rstrip('\r\n'))
-        elements = [self.handle_request(socket_file)
-                    for _ in range(num_items * 2)]
+        num_items = int(socket_file.readline().rstrip('\r\n'.encode('utf-8')))
+        elements = [self.handle_request(socket_file) for _ in range(num_items * 2)]
         return dict(zip(elements[::2], elements[1::2]))
     
     def write_response(self, socket_file, data):
@@ -70,26 +68,25 @@ class ProtocolHandler(object):
     # Find instance of class and write with the appropriate first byte
     def _write(self, buffer, data):
         if isinstance(data, str):
-
             data = data.encode('utf-8')
 
         if isinstance(data, bytes):
-            buffer.write(('$%s\r\n%s\r\n' % (len(data), data)).encode())
+            buffer.write(('$%s\r\n%s\r\n' % (len(data), data)).encode('utf-8'))
         elif isinstance(data, int):
-            buffer.write((':%s\r\n' % data).encode())
+            buffer.write((':%s\r\n' % data).encode('utf-8'))
         elif isinstance(data, Error):
-            buffer.write(('-%s\r\n' % Error.message).encode())
+            buffer.write(('-%s\r\n' % Error.message).encode('utf-8'))
         elif isinstance(data, (list, tuple)):
-            buffer.write(('*%s\r\n' % len(data)).encode())
+            buffer.write(('*%s\r\n' % len(data)).encode('utf-8'))
             for item in data:
                 self._write(buffer, item)
         elif isinstance(data, dict):
-            buffer.write(('%%%s\r\n' % len(data)).encode())
+            buffer.write(('%%%s\r\n' % len(data)).encode('utf-8'))
             for key in data:
                 self._write(buffer, key)
                 self._write(buffer, data[key])
         elif data is None:
-            buffer.write('$-1\r\n'.encode())
+            buffer.write(('$-1\r\n').encode('utf-8'))
         else:
             raise CommandError('unrecognized type: %s' % type(data))
 
@@ -102,8 +99,8 @@ class Server(object):
             self.connection_handler,
             spawn=self._pool)
 
-        self._protocol = ProtocolHandler()
         self._kv = {}
+        self._protocol = ProtocolHandler()
         self._commands = self.get_commands()
 
     def get_commands(self):
@@ -116,7 +113,7 @@ class Server(object):
             'MSET': self.mset
         }
 
-    def connection_handler(self, conn, address):
+    def connection_handler(self, conn, _address):
         # Change a socket object into a file-like object
         socket_file = conn.makefile('rwb')
 
@@ -194,25 +191,26 @@ class Client(object):
 
         if isinstance(res, Error):
             raise CommandError(res.message)
+        
         return res
     
     def get(self, key):
-        return self.execute('GET', key)
+        return self.execute('GET'.encode('utf-8'), key)
 
     def set(self, key, value):
-        return self.execute('SET', key, value)
+        return self.execute('SET'.encode('utf-8'), key, value)
 
     def delete(self, key):
-        return self.execute('DELETE', key)
+        return self.execute('DELETE'.encode('utf-8'), key)
 
     def flush(self):
-        return self.execute('FLUSH')
+        return self.execute('FLUSH'.encode('utf-8'))
 
     def mget(self, *keys):
-        return self.execute('MGET', *keys)
+        return self.execute('MGET'.encode('utf-8'), *keys)
 
     def mset(self, *items):
-        return self.execute('MSET', *items)
+        return self.execute('MSET'.encode('utf-8'), *items)
         
 if __name__ == '__main__':
     from gevent import monkey; monkey.patch_all()
